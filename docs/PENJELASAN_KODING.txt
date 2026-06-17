@@ -1,0 +1,527 @@
+PENJELASAN KODING DETAIL - FOUNDATION SHADE PREDICTOR
+=========================================================
+
+FILE: config.py (28 baris)
+--------------------------
+
+Baris 1-3: Docstring untuk file konfigurasi
+Baris 5: Import Path dari pathlib untuk manipulasi path file
+Baris 7: BASE_PATH = Path(__file__).parent
+        - Mendapatkan path direktori parent dari file config.py ini
+Baris 8: MODELS_PATH = BASE_PATH / "models"
+        - Path lengkap ke folder models
+Baris 10: YOLO_MODEL_NAME = MODELS_PATH / 'yolov8n.pt'
+        - Path lengkap ke file model YOLO (yolov8n.pt)
+Baris 11: YOLO_CONFIDENCE_THRESHOLD = 0.25
+        - Threshold confidence untuk deteksi YOLO (25%)
+Baris 13-18: SKIN_TO_FOUNDATION = {...}
+        - Dictionary mapping skin tone ke foundation shade
+        - Fair -> Porcelain
+        - Medium -> Natural Beige
+        - Tan -> Caramel
+Baris 20-21: SUPPORTED_FORMATS = {...}
+        - Set format gambar yang didukung untuk processing
+Baris 23-24: ALLOWED_EXTENSIONS = {...}
+        - Set ekstensi file yang diizinkan untuk upload via Flask
+Baris 26-27: CATEGORIES = ['fair', 'medium', 'tan']
+        - List kategori skin tone untuk dataset/training
+
+
+FILE: app.py (111 baris)
+-------------------------
+
+Baris 1-3: Docstring untuk aplikasi web Flask
+Baris 5: import sys
+        - Import module sys untuk manipulasi system path
+Baris 6: from pathlib import Path
+        - Import Path untuk manipulasi path file
+Baris 7: from flask import Flask, render_template, request, jsonify
+        - Flask: Framework web utama
+        - render_template: Untuk render template HTML
+        - request: Untuk handle HTTP request
+        - jsonify: Untuk convert Python object ke JSON response
+Baris 8: import os
+        - Import os untuk operasi sistem (file, directory)
+Baris 9: import base64
+        - Import base64 untuk encoding/decoding data base64
+        - Digunakan untuk mengirim frame video dari frontend ke backend
+Baris 10: import cv2
+        - Import OpenCV untuk processing gambar
+Baris 11: import numpy as np
+        - Import NumPy untuk operasi array numerik
+Baris 13: sys.path.append(str(Path(__file__).parent / "src"))
+        - Menambahkan folder "src" ke Python path
+        - Agar bisa import module dari folder src
+Baris 15: from predict import predict_from_image, predict_from_frame
+        - Import fungsi prediksi dari file predict.py
+        - predict_from_image: untuk prediksi dari file gambar
+        - predict_from_frame: untuk prediksi dari frame video
+Baris 16: from config import ALLOWED_EXTENSIONS
+        - Import ALLOWED_EXTENSIONS dari config.py
+        - Untuk validasi ekstensi file upload
+Baris 18: app = Flask(__name__)
+        - Membuat instance Flask application
+        - __name__ adalah nama modul Python
+Baris 20: app.config['UPLOAD_FOLDER'] = 'uploads'
+        - Konfigurasi folder untuk menyimpan file upload
+Baris 21: app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+        - Maksimal ukuran file upload: 16 MB (16 * 1024 * 1024 bytes)
+Baris 23: os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        - Membuat folder uploads jika belum ada
+        - exist_ok=True: tidak error jika folder sudah ada
+Baris 25-26: def allowed_file(filename):
+        - Fungsi untuk validasi ekstensi file
+        - Mengecek apakah filename memiliki titik dan ekstensinya ada di ALLOWED_EXTENSIONS
+        - filename.rsplit('.', 1)[1]: mengambil ekstensi file (setelah titik terakhir)
+        - .lower(): convert ke lowercase untuk case-insensitive comparison
+Baris 28-30: @app.route('/')
+        - Decorator untuk mendefinisikan route URL
+        - Route '/' adalah root URL (homepage)
+        - def index(): Fungsi yang akan dijalankan saat route diakses
+Baris 30: return render_template('index.html')
+        - Render template HTML index.html
+        - Template diambil dari folder templates/
+Baris 32-33: @app.route('/predict', methods=['POST'])
+        - Route '/predict' dengan method POST
+        - Digunakan untuk endpoint prediksi dari upload gambar
+Baris 34-35: if 'file' not in request.files:
+        - Mengecek apakah ada file di request
+        - Jika tidak, return error 400 dengan pesan
+Baris 37: file = request.files['file']
+        - Mengambil file dari request dengan key 'file'
+Baris 39-40: if file.filename == '':
+        - Mengecek apakah filename kosong
+        - Jika kosong, return error 400
+Baris 42-43: if not allowed_file(file.filename):
+        - Validasi ekstensi file menggunakan fungsi allowed_file()
+        - Jika tidak valid, return error 400 dengan pesan format yang didukung
+Baris 45-46: filename = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+        - Menggabungkan path upload folder dengan filename
+        - file.save(filename): Menyimpan file ke disk
+Baris 48-52: try:
+        - Mulai block try-catch untuk handle exception
+        - result = predict_from_image(filename): Panggil fungsi prediksi
+        - if result is None: Jika prediksi gagal, return error 400
+Baris 54: os.remove(filename)
+        - Hapus file upload setelah diproses (cleanup)
+Baris 56-63: return jsonify({...})
+        - Return response JSON dengan hasil prediksi
+        - success: True menandakan prediksi berhasil
+        - skin_color: Kategori skin tone (Fair/Medium/Tan)
+        - foundation_shade: Rekomendasi foundation shade
+        - confidence: Dictionary confidence score untuk setiap kategori
+        - rgb_values: Tuple nilai RGB (R, G, B)
+        - model_type: Tipe model yang digunakan (YOLO)
+Baris 65-68: except Exception as e:
+        - Catch exception jika terjadi error
+        - if os.path.exists(filename): Hapus file jika masih ada (cleanup)
+        - return error 500 dengan pesan error
+Baris 70-71: @app.route('/predict_frame', methods=['POST'])
+        - Route '/predict_frame' dengan method POST
+        - Digunakan untuk endpoint prediksi dari frame video (live camera)
+Baris 72-75: try:
+        - Mulai block try-catch
+        - data = request.get_json(): Parse JSON dari request body
+        - if not data or 'frame' not in data: Validasi data
+Baris 77-79: frame_data = data['frame']
+        - Mengambil data frame dari JSON
+        - if ',' in frame_data: Jika ada koma (format data URL)
+        - frame_data = frame_data.split(',')[1]: Ambil bagian setelah koma (base64 data)
+Baris 81-83: frame_bytes = base64.b64decode(frame_data)
+        - Decode base64 string ke bytes
+        - nparr = np.frombuffer(frame_bytes, np.uint8): Convert bytes ke numpy array
+        - frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR): Decode numpy array ke image OpenCV
+Baris 85-86: if frame is None:
+        - Validasi apakah decoding berhasil
+        - Jika frame None, return error 400
+Baris 88-91: result = predict_from_frame(frame)
+        - Panggil fungsi prediksi dari frame
+        - if result is None: Jika gagal, return error 400
+Baris 93-100: return jsonify({...})
+        - Return response JSON dengan hasil prediksi (sama seperti sebelumnya)
+Baris 102-103: except Exception as e:
+        - Catch exception dan return error 500
+Baris 105-107: @app.route('/health')
+        - Route '/health' untuk health check
+        - return jsonify({'status': 'healthy'}): Return status healthy
+Baris 109-110: if __name__ == '__main__':
+        - Mengecek apakah script dijalankan langsung (bukan di-import)
+        - app.run(debug=True, host='127.0.0.1', port=5000): Jalankan Flask app
+        - debug=True: Mode debug (auto-reload saat code berubah)
+        - host='127.0.0.1': Hanya bisa diakses dari localhost
+        - port=5000: Port 5000
+
+
+FILE: src/predict.py (252 baris)
+-------------------------------
+
+Baris 1-3: Docstring untuk modul prediksi
+Baris 5: import cv2
+        - Import OpenCV untuk processing gambar
+Baris 6: import numpy as np
+        - Import NumPy untuk operasi array
+Baris 7: from pathlib import Path
+        - Import Path untuk manipulasi path
+Baris 8: from ultralytics import YOLO
+        - Import YOLO dari library ultralytics untuk object detection
+Baris 9: import sys
+        - Import sys untuk manipulasi system path
+Baris 10: import torch
+        - Import PyTorch untuk kompatibilitas dengan PyTorch 2.6+
+Baris 12: sys.path.append(str(Path(__file__).parent.parent))
+        - Menambahkan parent directory ke Python path
+        - Agar bisa import config dari root project
+Baris 13: from config import *
+        - Import semua variabel dari config.py
+        - Termasuk: YOLO_MODEL_NAME, SKIN_TO_FOUNDATION, dll
+Baris 15-20: # Monkey-patch torch.load untuk kompatibilitas PyTorch 2.6+
+        - PyTorch 2.6 mengubah default weights_only dari False ke True
+        - Ini menyebabkan error saat loading model YOLO yang mengandung custom classes
+        - Solusi: Monkey-patch torch.load untuk selalu menggunakan weights_only=False
+        - Aman untuk model dari trusted source (ultralytics)
+        - _original_torch_load = torch.load: Simpan fungsi original
+        - def _patched_torch_load(f, *args, **kwargs): Fungsi patched
+        - kwargs.setdefault('weights_only', False): Set default weights_only=False
+        - torch.load = _patched_torch_load: Replace torch.load dengan patched version
+
+Baris 22-35: def load_yolo_model():
+        - Fungsi untuk memuat model YOLO
+Baris 15-18: try:
+        - model = YOLO(YOLO_MODEL_NAME): Load model YOLO dari file
+        - print(...): Print pesan sukses
+        - return model: Return model yang dimuat
+Baris 19-27: except Exception as e:
+        - Catch exception jika gagal load model
+        - print(...): Print error message
+        - try: Coba load model lagi (mungkin download otomatis)
+        - except Exception as e2: Jika masih gagal, return None
+
+Baris 29-61: def analyze_skin_tone(face_region):
+        - Fungsi untuk analisis skin tone dari region wajah
+Baris 31: face_rgb = cv2.cvtColor(face_region, cv2.COLOR_BGR2RGB)
+        - Convert BGR (format OpenCV) ke RGB (format standar)
+Baris 32: pixels = face_rgb.reshape(-1, 3)
+        - Reshape array 2D ke 1D dengan 3 channel (R, G, B)
+        - -1 berarti auto-calculate dimension
+Baris 34-35: brightness = np.mean(pixels, axis=1)
+        - Hitung brightness rata-rata untuk setiap pixel
+        - valid_pixels = pixels[(brightness > 20) & (brightness < 250)]
+        - Filter pixels: hanya yang brightness antara 20-250
+        - Menghindari pixels terlalu gelap atau terlalu terang
+Baris 37-39: if len(valid_pixels) == 0:
+        - Jika tidak ada valid pixels setelah filtering
+        - valid_pixels = pixels: Gunakan semua pixels
+        - print(...): Print warning
+Baris 41-42: mean_rgb = np.mean(valid_pixels, axis=0)
+        - Hitung rata-rata RGB dari valid pixels
+        - r, g, b = mean_rgb: Unpack ke variabel R, G, B
+Baris 44: print(...): Print nilai RGB
+Baris 46-48: face_hsv = cv2.cvtColor(face_region, cv2.COLOR_BGR2HSV)
+        - Convert BGR ke HSV (Hue, Saturation, Value)
+        - mean_hsv = np.mean(face_hsv.reshape(-1, 3), axis=0)
+        - Hitung rata-rata HSV
+        - h, s, v = mean_hsv: Unpack ke H, S, V
+Baris 50-52: if r > 160 and g > 120 and b > 100 and s < 50:
+        - Klasifikasi Fair: RGB tinggi, saturation rendah
+        - print(...): Print klasifikasi
+        - return 'Fair', (int(r), int(g), int(b)): Return kategori dan RGB
+Baris 53-55: elif r > 120 and g > 90 and b > 70 and s < 100:
+        - Klasifikasi Medium: RGB medium, saturation medium
+        - return 'Medium', (int(r), int(g), int(b))
+Baris 56-58: else:
+        - Klasifikasi Tan: RGB rendah, saturation tinggi
+        - return 'Tan', (int(r), int(g), int(b))
+Baris 59-61: except Exception as e:
+        - Catch exception dan return default Medium
+
+Baris 63-87: def calculate_confidence(skin_tone, rgb_values):
+        - Fungsi untuk menghitung confidence score
+Baris 64: r, g, b = rgb_values
+        - Unpack RGB values
+Baris 66-70: typical_values = {...}
+        - Dictionary nilai RGB tipikal untuk setiap kategori
+        - Fair: (210, 180, 150)
+        - Medium: (170, 140, 110)
+        - Tan: (130, 100, 80)
+Baris 72-75: distances = {}
+        - for tone, typical in typical_values.items():
+        - dist = np.sqrt(sum((a - b) ** 2 for a, b in zip(rgb_values, typical)))
+        - Hitung Euclidean distance antara RGB yang terdeteksi dan tipikal
+        - distances[tone] = dist: Simpan distance untuk setiap kategori
+Baris 77-78: max_dist = max(distances.values())
+        - confidence = {}
+        - Hitung distance maksimum
+        - Inisialisasi dictionary confidence
+Baris 79-81: for tone, dist in distances.items():
+        - conf = 1 - (dist / (max_dist * 1.5))
+        - Hitung confidence: semakin dekat ke tipikal, semakin tinggi confidence
+        - confidence[tone] = max(0, min(1, conf)): Clamp antara 0-1
+Baris 83-85: total = sum(confidence.values())
+        - if total > 0:
+        - confidence = {k: v/total for k, v in confidence.items()}
+        - Normalize confidence agar total = 1 (100%)
+Baris 87: return confidence: Return dictionary confidence
+
+Baris 89-133: def detect_face_with_yolo(image_path, model):
+        - Fungsi untuk deteksi wajah dari file gambar menggunakan YOLO
+Baris 91-94: img = cv2.imread(str(image_path))
+        - Baca gambar dari file
+        - if img is None: Validasi apakah gambar berhasil dibaca
+        - print(...): Print error jika gagal
+        - return None: Return None jika gagal
+Baris 96-97: results = model(img, conf=0.25)
+        - Jalankan YOLO model pada gambar dengan confidence threshold 0.25
+        - detections = results[0].boxes: Ambil bounding boxes dari hasil
+Baris 99-101: if len(detections) == 0:
+        - Jika tidak ada deteksi
+        - print(...): Print pesan
+        - return None: Return None
+Baris 103: person_detections = [box for box in detections if int(box.cls[0]) == 0]
+        - Filter deteksi: hanya yang class 0 (person)
+        - YOLO class 0 biasanya adalah person
+Baris 105-109: if len(person_detections) == 0:
+        - Jika tidak ada person detection
+        - if len(detections) > 0: Jika ada deteksi lain
+        - person_detections = detections: Gunakan semua deteksi
+        - else: return None: Return None jika tidak ada deteksi sama sekali
+Baris 111: largest_box = max(person_detections, key=lambda box: (box.xywh[0][2] * box.xywh[0][3]))
+        - Pilih bounding box terbesar berdasarkan area (width * height)
+        - Asumsi: wajah terbesar adalah wajah utama
+Baris 112: x1, y1, x2, y2 = map(int, largest_box.xyxy[0])
+        - Ambil koordinat bounding box (x1, y1, x2, y2)
+        - xyxy: format (x_min, y_min, x_max, y_max)
+        - map(int, ...): Convert ke integer
+Baris 114-118: face_height = int((y2 - y1) * 0.5)
+        - Hitung tinggi region wajah (50% dari tinggi bounding box)
+        - Asumsi: wajah berada di 50% atas body
+        - face_y1 = y1: Koordinat y atas wajah
+        - face_y2 = y1 + face_height: Koordinat y bawah wajah
+        - face_x1 = x1: Koordinat x kiri wajah
+        - face_x2 = x2: Koordinat x kanan wajah
+Baris 120-123: face_y1 = max(0, face_y1)
+        - Clamp koordinat agar tidak keluar dari gambar
+        - face_y2 = min(img.shape[0], face_y2): Clamp y bawah
+        - face_x1 = max(0, face_x1): Clamp x kiri
+        - face_x2 = min(img.shape[1], face_x2): Clamp x kanan
+Baris 125: face_region = img[face_y1:face_y2, face_x1:face_x2]
+        - Crop region wajah dari gambar menggunakan slicing
+Baris 127-128: if face_region.size == 0:
+        - Validasi apakah region tidak kosong
+        - return None: Return None jika kosong
+Baris 130: return face_region: Return region wajah
+Baris 131-133: except Exception as e:
+        - Catch exception dan return None
+
+Baris 135-173: def detect_face_with_yolo_frame(img, model):
+        - Fungsi untuk deteksi wajah dari frame video (sama seperti sebelumnya)
+        - Perbedaan: input adalah numpy array (bukan path file)
+        - Return: face_region dan bounding box coordinates (x1, y1, x2, y2)
+        - Logika sama dengan detect_face_with_yolo
+
+Baris 175-201: def predict_from_frame(frame):
+        - Fungsi untuk prediksi dari frame video
+Baris 176-178: model = load_yolo_model()
+        - Load model YOLO
+        - if model is None: Validasi model
+        - return None: Return None jika gagal
+Baris 180-182: face_region, bbox = detect_face_with_yolo_frame(frame, model)
+        - Deteksi wajah dari frame
+        - if face_region is None: Validasi region wajah
+        - return None: Return None jika gagal
+Baris 184-187: try:
+        - skin_tone, rgb_values = analyze_skin_tone(face_region)
+        - Analisis skin tone dari region wajah
+        - confidence = calculate_confidence(skin_tone, rgb_values)
+        - Hitung confidence score
+        - foundation = SKIN_TO_FOUNDATION.get(skin_tone, 'Unknown')
+        - Map skin tone ke foundation shade
+Baris 189-196: result = {...}
+        - Buat dictionary hasil prediksi
+        - skin_color: Kategori skin tone
+        - foundation_shade: Rekomendasi foundation
+        - confidence: Dictionary confidence score
+        - model_type: 'YOLO'
+        - rgb_values: Nilai RGB
+        - bbox: Bounding box coordinates
+Baris 198: return result: Return hasil prediksi
+Baris 199-201: except Exception as e:
+        - Catch exception dan return None
+
+Baris 203-251: def predict_from_image(image_path):
+        - Fungsi untuk prediksi dari file gambar
+Baris 204-206: print(...): Print header proses prediksi
+Baris 208-211: model = load_yolo_model()
+        - Load model YOLO
+        - if model is None: Validasi model
+        - print(...): Print error
+        - return None: Return None
+Baris 213-214: image_path = Path(image_path)
+        - Convert string ke Path object
+        - if image_path.suffix.lower() not in SUPPORTED_FORMATS:
+        - Validasi format gambar
+Baris 215-217: print(...): Print format tidak didukung
+        - return None: Return None
+Baris 219: print(...): Print nama gambar yang diproses
+Baris 221-224: face_region = detect_face_with_yolo(image_path, model)
+        - Deteksi wajah dari gambar
+        - if face_region is None: Validasi region wajah
+        - print(...): Print error
+        - return None: Return None
+Baris 226-229: try:
+        - skin_tone, rgb_values = analyze_skin_tone(face_region)
+        - Analisis skin tone
+        - confidence = calculate_confidence(skin_tone, rgb_values)
+        - Hitung confidence
+        - foundation = SKIN_TO_FOUNDATION.get(skin_tone, 'Unknown')
+        - Map ke foundation shade
+Baris 231-238: result = {...}
+        - Buat dictionary hasil prediksi
+        - Sama seperti predict_from_frame tapi tanpa bbox
+        - image: image_path.name: Nama file gambar
+Baris 240-246: print(...): Print hasil prediksi
+        - Skin tone, RGB values, foundation recommendation
+Baris 248: return result: Return hasil prediksi
+Baris 249-251: except Exception as e:
+        - Catch exception dan return None
+
+
+FILE: templates/index.html (JavaScript)
+-----------------------------------------
+
+Variabel Global:
+- selectedFile: File yang dipilih untuk prediksi
+- videoStream: Stream video untuk live camera real-time
+- captureVideoStream: Stream video untuk capture foto tunggal
+- model: Model COCO-SSD untuk deteksi wajah di browser
+- detectionInterval: Interval untuk deteksi wajah real-time
+- currentPrediction: Hasil prediksi terakhir
+- isPredicting: Flag untuk mencegah multiple prediksi simultaneously
+
+Fungsi Utama:
+
+handleFile(file):
+- Validasi file adalah gambar
+- Simpan ke selectedFile
+- Tampilkan preview gambar
+- Aktifkan tombol prediksi
+
+startCamera():
+- Request akses kamera via navigator.mediaDevices.getUserMedia()
+- Validasi HTTPS/localhost requirement
+- Tampilkan video stream di videoElement
+- Load COCO-SSD model
+- Mulai deteksi wajah real-time
+
+startFaceDetection():
+- Load model COCO-SSD
+- Set interval deteksi setiap 1 detik
+- Deteksi persons di video frame
+- Gambar bounding box hijau di canvas
+- Jika wajah terdeteksi dan tidak sedang prediksi, kirim frame untuk prediksi
+
+sendFrameForPrediction(video):
+- Cek flag isPredicting untuk rate limiting
+- Jika sedang prediksi, return (skip)
+- Set isPredicting = true
+- Capture frame video ke canvas
+- Konversi ke base64
+- Kirim ke backend via POST /predict_frame
+- Terima hasil prediksi
+- Simpan ke currentPrediction
+- Tampilkan hasil di overlay video
+- Reset isPredicting = false di finally block
+
+stopDetection():
+- Clear interval deteksi
+- Reset currentPrediction dan isPredicting
+- Clear canvas
+- Hide detection status
+
+stopCamera():
+- Stop detection
+- Stop video stream
+- Hide camera section
+- Show upload area
+
+capturePhoto():
+- Request akses kamera untuk capture foto tunggal
+- Validasi HTTPS/localhost requirement
+- Tampilkan video stream di captureVideoElement
+- Show capture camera section
+- Hide upload area
+
+takeCapturedPhoto():
+- Capture frame dari captureVideoElement ke canvas
+- Konversi ke blob
+- Buat File object dari blob
+- Panggil handleFile(file) untuk proses seperti upload
+- Stop capture camera
+
+stopCaptureCamera():
+- Stop capture video stream
+- Hide capture camera section
+- Show upload area
+
+predict():
+- Kirim selectedFile ke backend via POST /predict
+- Tampilkan loading spinner
+- Terima hasil prediksi
+- Tampilkan hasil dengan confidence bars
+
+displayResult(data):
+- Tampilkan hasil prediksi dengan background color sesuai foundation shade
+- Tampilkan foundation shade, skin tone, RGB values
+- Tampilkan confidence bars untuk setiap kategori
+
+
+RINGKASAN ALUR KERJA APLIKASI
+==============================
+
+1. USER BUKA APLIKASI (http://127.0.0.1:5000)
+   - Flask route '/' render index.html
+
+2. PILIH METODE INPUT:
+   a) Upload Foto: Drag & drop atau pilih file
+   b) Capture Foto: Buka kamera, ambil foto tunggal
+   c) Live Camera Real-time: Buka kamera dengan deteksi berkelanjutan
+
+3. UPLOAD FOTO / CAPTURE FOTO:
+   - File/foto disimpan di selectedFile
+   - Tampilkan preview
+   - User klik "Prediksi Foundation Shade"
+   - Kirim ke backend via POST /predict
+   - Backend proses gambar dengan YOLO
+   - Return hasil prediksi
+   - Tampilkan hasil dengan confidence bars
+
+4. LIVE CAMERA REAL-TIME:
+   - JavaScript request akses kamera
+   - Video stream ditampilkan di videoElement
+   - COCO-SSD model dimuat untuk deteksi wajah
+   - Setiap 1 detik, deteksi persons di video frame
+   - Bounding box hijau digambar di canvas
+   - Jika wajah terdeteksi dan tidak sedang prediksi (rate limiting):
+     - Capture frame ke canvas
+     - Konversi ke base64
+     - Kirim ke backend via POST /predict_frame
+   - Backend decode frame dan proses dengan YOLO
+   - Return hasil prediksi
+   - Tampilkan hasil di overlay video (Foundation: XXX, Skin: XXX (XX%))
+   - Rate limiting mencegah multiple request simultaneously
+
+5. BACKEND PROCESSING (/predict dan /predict_frame):
+   - Decode gambar/frame ke OpenCV format
+   - Load YOLO model
+   - Detect wajah dengan YOLO
+   - Crop region wajah
+   - Analisis skin tone (RGB + HSV analysis)
+   - Klasifikasi ke Fair/Medium/Tan
+   - Hitung confidence score
+   - Map ke foundation shade
+   - Return JSON dengan hasil prediksi
+
+6. FITUR RATE LIMITING:
+   - Flag isPredicting mencegah multiple prediksi simultaneously
+   - Hanya satu prediksi berjalan dalam satu waktu
+   - Mengurangi beban server dan mencegah error
+   - Status message menunjukkan state prediksi

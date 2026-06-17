@@ -1,6 +1,5 @@
 """
 Foundation Shade Predictor using YOLO
-YOLO-based face detection and skin tone classification
 """
 
 import cv2
@@ -8,20 +7,25 @@ import numpy as np
 from pathlib import Path
 from ultralytics import YOLO
 import sys
+import torch
 
-# Add parent directory to path for config
 sys.path.append(str(Path(__file__).parent.parent))
 from config import *
 
+# Monkey-patch torch.load to use weights_only=False for trusted models
+_original_torch_load = torch.load
+def _patched_torch_load(f, *args, **kwargs):
+    kwargs.setdefault('weights_only', False)
+    return _original_torch_load(f, *args, **kwargs)
+torch.load = _patched_torch_load
+
 def load_yolo_model():
-    """Load YOLO model for face detection"""
     try:
         model = YOLO(YOLO_MODEL_NAME)
         print(f"YOLO model loaded successfully: {YOLO_MODEL_NAME}")
         return model
     except Exception as e:
         print(f"Error loading YOLO model: {e}")
-        print("Attempting to download YOLO model...")
         try:
             model = YOLO(YOLO_MODEL_NAME)
             print(f"YOLO model downloaded and loaded successfully: {YOLO_MODEL_NAME}")
@@ -31,7 +35,6 @@ def load_yolo_model():
             return None
 
 def analyze_skin_tone(face_region):
-    """Analyze skin tone from face region using color analysis"""
     try:
         face_rgb = cv2.cvtColor(face_region, cv2.COLOR_BGR2RGB)
         pixels = face_rgb.reshape(-1, 3)
@@ -66,7 +69,6 @@ def analyze_skin_tone(face_region):
         return 'Medium', (150, 120, 100)
 
 def calculate_confidence(skin_tone, rgb_values):
-    """Calculate confidence scores for each skin tone class"""
     r, g, b = rgb_values
     
     typical_values = {
@@ -93,7 +95,6 @@ def calculate_confidence(skin_tone, rgb_values):
     return confidence
 
 def detect_face_with_yolo(image_path, model):
-    """Detect face using YOLO model"""
     try:
         img = cv2.imread(str(image_path))
         if img is None:
@@ -139,8 +140,75 @@ def detect_face_with_yolo(image_path, model):
         print(f"Error saat mendeteksi wajah dengan YOLO: {e}")
         return None
 
+def detect_face_with_yolo_frame(img, model):
+    try:
+        results = model(img, conf=0.25)
+        detections = results[0].boxes
+        
+        if len(detections) == 0:
+            return None, None
+        
+        person_detections = [box for box in detections if int(box.cls[0]) == 0]
+        
+        if len(person_detections) == 0:
+            if len(detections) > 0:
+                person_detections = detections
+            else:
+                return None, None
+        
+        largest_box = max(person_detections, key=lambda box: (box.xywh[0][2] * box.xywh[0][3]))
+        x1, y1, x2, y2 = map(int, largest_box.xyxy[0])
+        
+        face_height = int((y2 - y1) * 0.5)
+        face_y1 = y1
+        face_y2 = y1 + face_height
+        face_x1 = x1
+        face_x2 = x2
+        
+        face_y1 = max(0, face_y1)
+        face_y2 = min(img.shape[0], face_y2)
+        face_x1 = max(0, face_x1)
+        face_x2 = min(img.shape[1], face_x2)
+        
+        face_region = img[face_y1:face_y2, face_x1:face_x2]
+        
+        if face_region.size == 0:
+            return None, None
+        
+        return face_region, (x1, y1, x2, y2)
+    except Exception as e:
+        print(f"Error saat mendeteksi wajah dengan YOLO: {e}")
+        return None, None
+
+def predict_from_frame(frame):
+    model = load_yolo_model()
+    if model is None:
+        return None
+    
+    face_region, bbox = detect_face_with_yolo_frame(frame, model)
+    if face_region is None:
+        return None
+    
+    try:
+        skin_tone, rgb_values = analyze_skin_tone(face_region)
+        confidence = calculate_confidence(skin_tone, rgb_values)
+        foundation = SKIN_TO_FOUNDATION.get(skin_tone, 'Unknown')
+        
+        result = {
+            'skin_color': skin_tone,
+            'foundation_shade': foundation,
+            'confidence': confidence,
+            'model_type': 'YOLO',
+            'rgb_values': rgb_values,
+            'bbox': bbox
+        }
+        
+        return result
+    except Exception as e:
+        print(f"Error saat prediksi: {e}")
+        return None
+
 def predict_from_image(image_path):
-    """Predict skin tone using YOLO for face detection and color analysis"""
     print("=" * 60)
     print("MEMULAI PROSES PREDIKSI SKIN TONE")
     print("=" * 60)

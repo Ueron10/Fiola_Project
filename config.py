@@ -1,17 +1,12 @@
 """
 Configuration file for Foundation Shade Predictor
-YOLO-based skin tone detection and foundation recommendation
 """
 
 from pathlib import Path
 
-# Base paths
 BASE_PATH = Path(__file__).parent
-RAW_IMAGES_PATH = BASE_PATH / "raw_images"
 MODELS_PATH = BASE_PATH / "models"
-NOTEBOOKS_PATH = BASE_PATH / "notebooks"
 
-# YOLO configuration
 YOLO_MODEL_NAME = MODELS_PATH / 'yolov8n.pt'
 YOLO_CONFIDENCE_THRESHOLD = 0.25
 
